@@ -24,3 +24,10 @@
     "noEmit": true
   }
 }
+{
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
+}
