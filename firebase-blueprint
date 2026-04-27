@@ -1,0 +1,78 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A recovery product available for purchase.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number", "description": "Original Shopify product ID" },
+        "name": { "type": "string", "description": "Name of the product" },
+        "description": { "type": "string", "description": "HTML or plain text description" },
+        "price": { "type": "number", "description": "Price in AED" },
+        "image": { "type": "string", "description": "Primary image URL" },
+        "category": { "type": "string", "description": "Product category" },
+        "variants": { "type": "string", "description": "JSON string of product variants" },
+        "options": { "type": "string", "description": "JSON string of product options" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "price", "image", "category"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A customer order.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user who placed the order (if signed in)" },
+        "customerName": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "processing", "completed", "cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerName", "customerEmail", "totalAmount", "status", "createdAt"]
+    },
+    "OrderItem": {
+      "title": "OrderItem",
+      "description": "A line item in an order.",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "number" },
+        "name": { "type": "string" },
+        "variantTitle": { "type": "string" },
+        "quantity": { "type": "number" },
+        "price": { "type": "number" }
+      },
+      "required": ["productId", "name", "quantity", "price"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile information.",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "isAdmin": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of products."
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Collection of orders."
+    },
+    "/orders/{orderId}/items/{itemId}": {
+      "schema": "OrderItem",
+      "description": "Subcollection of items for a specific order."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile collection."
+    }
+  }
+}

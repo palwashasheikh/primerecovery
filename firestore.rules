@@ -1,0 +1,121 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+    
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // --- Entity Validations ---
+    
+    function isValidProduct(data) {
+      return data.keys().hasAll(['id', 'name', 'price', 'image', 'category'])
+        && data.id is int
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.price is number && data.price >= 0
+        && data.image is string && data.image.size() <= 1000
+        && data.category is string && data.category.size() <= 100
+        && (!data.hasAny(['description']) || data.description is string && data.description.size() <= 10000)
+        && (!data.hasAny(['variants']) || data.variants is string && data.variants.size() <= 20000)
+        && (!data.hasAny(['options']) || data.options is string && data.options.size() <= 5000)
+        && (!data.hasAny(['updatedAt']) || data.updatedAt == request.time);
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll(['customerName', 'customerEmail', 'totalAmount', 'status', 'createdAt'])
+        && data.customerName is string && data.customerName.size() > 0 && data.customerName.size() <= 200
+        && data.customerEmail is string && data.customerEmail.size() > 0 && data.customerEmail.size() <= 200
+        && data.totalAmount is number && data.totalAmount >= 0
+        && data.status in ['pending', 'processing', 'completed', 'cancelled']
+        && data.createdAt == request.time
+        && (!data.hasAny(['userId']) || (data.userId is string && data.userId == request.auth.uid));
+    }
+
+    function isValidOrderItem(data) {
+      return data.keys().hasAll(['productId', 'name', 'quantity', 'price'])
+        && data.productId is int
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.quantity is int && data.quantity > 0 && data.quantity <= 100
+        && data.price is number && data.price >= 0
+        && (!data.hasAny(['variantTitle']) || (data.variantTitle is string && data.variantTitle.size() <= 200));
+    }
+
+    function isValidUser(data) {
+       return data.keys().hasAll(['displayName', 'email', 'photoURL', 'createdAt'])
+        && data.displayName is string && data.displayName.size() <= 200
+        && data.email is string && data.email.size() <= 200
+        && data.photoURL is string && data.photoURL.size() <= 1000
+        && data.createdAt == request.time
+        && (!data.hasAny(['isAdmin']) || data.isAdmin == false);
+    }
+
+    // --- Match Blocks ---
+
+    match /products/{productId} {
+      allow read: if true;
+      allow create: if isValidId(productId) && isAdmin() && isValidProduct(incoming()) && incoming().keys().size() >= 5;
+      allow update: if isValidId(productId) && isAdmin() && isValidProduct(incoming());
+      allow delete: if isValidId(productId) && isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow list: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow get: if isValidId(orderId) && (isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid));
+      
+      allow create: if isValidId(orderId) && isValidOrder(incoming());
+      
+      allow update: if isValidId(orderId) && (isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid))
+        && isValidOrder(incoming())
+        && (
+          isAdmin() || (
+            // User can only cancel if pending
+            existing().status == 'pending' && incoming().status == 'cancelled'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status'])
+          )
+        );
+      allow delete: if isValidId(orderId) && isAdmin();
+
+      match /items/{itemId} {
+        // Master Gate: Parent check
+        allow read: if isAdmin() || (isSignedIn() && get(/databases/$(database)/documents/orders/$(orderId)).data.userId == request.auth.uid);
+        allow create: if isValidId(itemId) && isValidOrderItem(incoming()) && (
+          existsAfter(/databases/$(database)/documents/orders/$(orderId))
+          || (isSignedIn() && get(/databases/$(database)/documents/orders/$(orderId)).data.userId == request.auth.uid)
+        );
+        allow update: if isValidId(itemId) && isAdmin();
+        allow delete: if isValidId(itemId) && isAdmin();
+      }
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming());
+      allow update: if isValidId(userId) && isOwner(userId) 
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL'])
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt;
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    match /admins/{userId} {
+      allow read: if isValidId(userId) && isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isValidId(userId) && (
+        (request.auth.token.email == 'hamadshalman23@gmail.com' && request.auth.token.email_verified == true) 
+        || isAdmin()
+      );
+    }
+  }
+}
