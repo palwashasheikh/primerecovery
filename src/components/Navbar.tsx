@@ -1,205 +1,312 @@
-import React from 'react';
-import { Search, Bath, ShoppingCart, Menu, X } from 'lucide-react';
-import { motion } from 'motion/react';
+import React, { useState, useEffect } from 'react';
+import { AnimatePresence } from 'motion/react';
+import { CheckCircle2, X } from 'lucide-react';
+import { Product, CartItem, ProductVariant } from './types';
+import ProductDetails from './components/ProductDetails';
+import Navbar from './components/Navbar';
+import Footer from './components/Footer';
+import CartSidebar from './components/CartSidebar';
+import CheckoutModal from './components/CheckoutModal';
+import Home from './pages/Home';
+import Blog from './pages/Blog';
+import Gallery from './pages/Gallery';
+import Contact from './pages/Contact';
 
-interface NavbarProps {
-  searchQuery: string;
-  setSearchQuery: (query: string) => void;
-  cartCount: number;
-  onOpenCart: () => void;
-  onOpenMenu: () => void;
-  activePage: string;
-  setActivePage: (page: any) => void;
-  activeCategory: string;
-  setActiveCategory: (cat: string) => void;
-  onLogoClick: () => void;
-}
+import { auth, db, googleProvider, OperationType, handleFirestoreError } from './lib/firebase';
+import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { collection, onSnapshot, addDoc, serverTimestamp, doc, setDoc } from 'firebase/firestore';
 
-export default function Navbar({
-  searchQuery,
-  setSearchQuery,
-  cartCount,
-  onOpenCart,
-  onOpenMenu,
-  activePage,
-  setActivePage,
-  activeCategory,
-  setActiveCategory,
-  onLogoClick
-}: NavbarProps) {
+export default function App() {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [user, setUser] = useState<User | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [orderSuccess, setOrderSuccess] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState('All');
+  const [activePage, setActivePage] = useState<'home' | 'blog' | 'gallery' | 'contact'>('home');
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [customerInfo, setCustomerInfo] = useState({ name: '', email: '' });
+
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        setCustomerInfo({
+          name: currentUser.displayName || '',
+          email: currentUser.email || ''
+        });
+        
+        // Sync user to Firestore
+        const userRef = doc(db, 'users', currentUser.uid);
+        setDoc(userRef, {
+          displayName: currentUser.displayName,
+          email: currentUser.email,
+          photoURL: currentUser.photoURL,
+          createdAt: serverTimestamp()
+        }, { merge: true }).catch(err => console.error("Error syncing user:", err));
+
+        // Auto-provision admin if it matches the designated email
+        if (currentUser.email === 'hamadshalman23@gmail.com' && currentUser.emailVerified) {
+          const adminRef = doc(db, 'admins', currentUser.uid);
+          setDoc(adminRef, {
+            email: currentUser.email,
+            assignedAt: serverTimestamp()
+          }, { merge: true }).catch(err => console.log("Admin doc already exists or check ignored"));
+        }
+      }
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
+
+  useEffect(() => {
+    const productsPath = 'products';
+    const unsubscribeProducts = onSnapshot(collection(db, productsPath), (snapshot) => {
+      const prods = snapshot.docs.map(doc => ({
+        ...doc.data()
+      })) as Product[];
+      
+      if (prods.length > 0) {
+        setProducts(prods);
+      } else {
+        // Fallback to API if Firestore is empty (initial seeding)
+        fetch('/api/products')
+          .then(res => res.json())
+          .then(data => setProducts(data))
+          .catch(err => console.error("API fallback failed:", err));
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, productsPath);
+    });
+
+    return () => unsubscribeProducts();
+  }, []);
+
+  const login = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      console.error('Login failed:', err);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.error('Logout failed:', err);
+    }
+  };
+
+  const addToCart = (product: Product & { selectedVariant?: ProductVariant; quantity?: number }) => {
+    const qtyToAdd = product.quantity || 1;
+    setCart(prev => {
+      const existing = prev.find(item => 
+        item.id === product.id && 
+        item.selectedVariant?.id === product.selectedVariant?.id
+      );
+      if (existing) {
+        return prev.map(item =>
+          (item.id === product.id && item.selectedVariant?.id === product.selectedVariant?.id)
+            ? { ...item, quantity: item.quantity + qtyToAdd } 
+            : item
+        );
+      }
+      // Remove quantity from product before spreading to avoid conflict if it exists, 
+      // but here we are spreading and then setting quantity: qtyToAdd which is fine.
+      return [...prev, { ...product, quantity: qtyToAdd }];
+    });
+    setIsCartOpen(true);
+  };
+
+  const removeFromCart = (productId: number, variantId?: number) => {
+    setCart(prev => prev.filter(item => 
+      !(item.id === productId && item.selectedVariant?.id === variantId)
+    ));
+  };
+
+  const updateQuantity = (productId: number, delta: number, variantId?: number) => {
+    setCart(prev => prev.map(item => {
+      if (item.id === productId && item.selectedVariant?.id === variantId) {
+        const newQty = Math.max(1, item.quantity + delta);
+        return { ...item, quantity: newQty };
+      }
+      return item;
+    }));
+  };
+
+  const totalAmount = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const categories: string[] = ['All', ...Array.from(new Set<string>(products.map(p => p.category)))];
+  const stripHtml = (html: string) => html.replace(/<[^>]*>?/gm, '');
+
+  const handleCheckout = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ordersPath = 'orders';
+    try {
+      // 1. Create the Order document
+      const orderData = {
+        userId: user?.uid || null,
+        customerName: customerInfo.name,
+        customerEmail: customerInfo.email,
+        totalAmount,
+        status: 'pending',
+        createdAt: serverTimestamp()
+      };
+      
+      const orderRef = await addDoc(collection(db, ordersPath), orderData);
+      
+      // 2. Add items to subcollection
+      const itemsPath = `orders/${orderRef.id}/items`;
+      for (const item of cart) {
+        await addDoc(collection(db, itemsPath), {
+          productId: item.id,
+          name: item.name,
+          variantTitle: item.selectedVariant?.title || null,
+          quantity: item.quantity,
+          price: item.price
+        });
+      }
+
+      // 3. Fallback to server API if needed (optional, but keep for now if server does something else like email notifications)
+      await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerName: customerInfo.name,
+          customerEmail: customerInfo.email,
+          items: cart,
+          totalAmount,
+          firebaseOrderId: orderRef.id
+        })
+      });
+
+      setOrderSuccess(true);
+      setCart([]);
+      setIsCheckoutOpen(false);
+    } catch (err) {
+      console.error('Checkout failed:', err);
+      handleFirestoreError(err, OperationType.WRITE, ordersPath);
+    }
+  };
+
+  const filteredProducts = products.filter(p => {
+    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         p.category.toLowerCase().includes(searchQuery.toLowerCase());
+    const cleanActiveCategory = activeCategory.toLowerCase().replace('the ', '');
+    const matchesCategory = activeCategory === 'All' || 
+                           p.category.toLowerCase().includes(cleanActiveCategory);
+    return matchesSearch && matchesCategory;
+  });
+
   return (
-    <nav className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-black/5">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
-          <div className="flex items-center gap-8">
-            {/* Search on the Left */}
-            <div className="relative hidden sm:block w-48 lg:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-              <input
-                type="text"
-                placeholder="Search..."
-                className="w-full bg-gray-100 border-none rounded-full py-1.5 pl-10 pr-4 text-sm focus:ring-2 focus:ring-black/5 transition-all"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-
-            <div 
-              className="flex items-center gap-2 cursor-pointer" 
-              onClick={onLogoClick}
-            >
-              <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center">
-                <Bath className="text-white w-5 h-5" />
-              </div>
-              <span className="text-xl font-bold tracking-tight">PRIMERECOVERY</span>
-            </div>
-          </div>
-
-          {/* Desktop Navigation Links */}
-          <div className="hidden md:flex items-center gap-8">
-            <button 
-              onClick={() => {
-                setActivePage('home');
-                setActiveCategory('The Ice Bath');
-              }}
-              className={`text-sm font-medium transition-colors ${activeCategory === 'The Ice Bath' && activePage === 'home' ? 'text-black' : 'text-gray-500 hover:text-black'}`}
-            >
-              The Ice Bath
-            </button>
-            <button 
-              onClick={() => {
-                setActivePage('home');
-                setActiveCategory('The Sauna');
-              }}
-              className={`text-sm font-medium transition-colors ${activeCategory === 'The Sauna' && activePage === 'home' ? 'text-black' : 'text-gray-500 hover:text-black'}`}
-            >
-              The Sauna
-            </button>
-            <button 
-              onClick={() => setActivePage('blog')}
-              className={`text-sm font-medium transition-colors ${activePage === 'blog' ? 'text-black' : 'text-gray-500 hover:text-black'}`}
-            >
-              Blog
-            </button>
-            <button 
-              onClick={() => setActivePage('gallery')}
-              className={`text-sm font-medium transition-colors ${activePage === 'gallery' ? 'text-black' : 'text-gray-500 hover:text-black'}`}
-            >
-              Gallery
-            </button>
-            <button 
-              onClick={() => setActivePage('contact')}
-              className={`text-sm font-medium transition-colors ${activePage === 'contact' ? 'text-black' : 'text-gray-500 hover:text-black'}`}
-            >
-              Contact
-            </button>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <button 
-              onClick={onOpenCart}
-              className="relative p-2 hover:bg-gray-100 rounded-full transition-colors"
-            >
-              <ShoppingCart className="w-6 h-6" />
-              {cartCount > 0 && (
-                <span className="absolute top-0 right-0 bg-black text-white text-[10px] font-bold w-4 h-4 flex items-center justify-center rounded-full">
-                  {cartCount}
-                </span>
-              )}
-            </button>
-
-            <button 
-              onClick={onOpenMenu}
-              className="md:hidden p-2 hover:bg-gray-100 rounded-full transition-colors"
-            >
-              <Menu className="w-6 h-6" />
-            </button>
-          </div>
-        </div>
-      </div>
-    </nav>
-  );
-}
-
-Navbar.MobileMenu = ({ 
-  isOpen, 
-  onClose, 
-  searchQuery, 
-  setSearchQuery, 
-  setActivePage, 
-  setActiveCategory, 
-  setSelectedProduct 
-}: any) => {
-  return (
-    <>
-      <motion.div 
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={onClose}
-        className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50"
+    <div className="min-h-screen bg-[#F8F9FA] text-[#1A1A1A] font-sans">
+      <Navbar 
+        user={user}
+        onLogin={login}
+        onLogout={logout}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        cartCount={cart.reduce((a, b) => a + b.quantity, 0)}
+        onOpenCart={() => setIsCartOpen(true)}
+        onOpenMenu={() => setIsMenuOpen(true)}
+        activePage={activePage}
+        setActivePage={setActivePage}
+        activeCategory={activeCategory}
+        setActiveCategory={setActiveCategory}
+        onLogoClick={() => {
+          setSelectedProduct(null);
+          setActivePage('home');
+          setActiveCategory('All');
+        }}
       />
-      <motion.div 
-        initial={{ x: '-100%' }}
-        animate={{ x: 0 }}
-        exit={{ x: '-100%' }}
-        className="fixed left-0 top-0 h-full w-full max-w-xs bg-white z-50 shadow-2xl flex flex-col"
-      >
-        <div className="p-6 border-b flex justify-between items-center">
-          <span className="text-xl font-bold tracking-tight">MENU</span>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="p-6 space-y-6">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <input
-              type="text"
-              placeholder="Search..."
-              className="w-full bg-gray-100 border-none rounded-xl py-3 pl-10 pr-4 text-sm focus:ring-2 focus:ring-black/5"
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setActivePage('home');
-                setSelectedProduct(null);
-              }}
-            />
+
+      <AnimatePresence>
+        {isMenuOpen && (
+          <Navbar.MobileMenu 
+            isOpen={isMenuOpen}
+            onClose={() => setIsMenuOpen(false)}
+            user={user}
+            onLogin={login}
+            onLogout={logout}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            setActivePage={setActivePage}
+            setActiveCategory={setActiveCategory}
+            setSelectedProduct={setSelectedProduct}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence mode="wait">
+        {selectedProduct ? (
+          <ProductDetails 
+            product={selectedProduct} 
+            onBack={() => setSelectedProduct(null)} 
+            onAddToCart={addToCart} 
+          />
+        ) : activePage === 'blog' ? (
+          <Blog />
+        ) : activePage === 'gallery' ? (
+          <Gallery />
+        ) : activePage === 'contact' ? (
+          <Contact />
+        ) : (
+          <Home 
+            products={filteredProducts}
+            categories={categories}
+            activeCategory={activeCategory}
+            setActiveCategory={setActiveCategory}
+            onProductClick={setSelectedProduct}
+            onAddToCart={addToCart}
+            stripHtml={stripHtml}
+          />
+        )}
+      </AnimatePresence>
+
+      <CartSidebar 
+        isOpen={isCartOpen}
+        onClose={() => setIsCartOpen(false)}
+        cart={cart}
+        updateQuantity={updateQuantity}
+        removeFromCart={removeFromCart}
+        totalAmount={totalAmount}
+        onCheckout={() => setIsCheckoutOpen(true)}
+      />
+
+      <CheckoutModal 
+        isOpen={isCheckoutOpen}
+        onClose={() => setIsCheckoutOpen(false)}
+        user={user}
+        customerInfo={customerInfo}
+        setCustomerInfo={setCustomerInfo}
+        handleCheckout={handleCheckout}
+        cartCount={cart.reduce((a, b) => a + b.quantity, 0)}
+        totalAmount={totalAmount}
+      />
+
+      {/* Success Toast */}
+      <AnimatePresence>
+        {orderSuccess && (
+          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-green-500 text-white px-6 py-4 rounded-2xl shadow-xl flex items-center gap-3 z-[70]">
+            <CheckCircle2 className="w-6 h-6" />
+            <div>
+              <p className="font-bold">Order Placed Successfully!</p>
+              <p className="text-sm opacity-90">We've sent a confirmation to your email.</p>
+            </div>
+            <button onClick={() => setOrderSuccess(false)} className="ml-4 hover:opacity-70">
+              <X className="w-5 h-5" />
+            </button>
           </div>
-          <nav className="space-y-4">
-            <button 
-              onClick={() => { setActivePage('home'); setActiveCategory('The Ice Bath'); onClose(); setSelectedProduct(null); }}
-              className="block w-full text-left text-lg font-medium py-2 border-b border-gray-50"
-            >
-              The Ice Bath
-            </button>
-            <button 
-              onClick={() => { setActivePage('home'); setActiveCategory('The Sauna'); onClose(); setSelectedProduct(null); }}
-              className="block w-full text-left text-lg font-medium py-2 border-b border-gray-50"
-            >
-              The Sauna
-            </button>
-            <button 
-              onClick={() => { setActivePage('blog'); onClose(); setSelectedProduct(null); }}
-              className="block w-full text-left text-lg font-medium py-2 border-b border-gray-50"
-            >
-              Blog
-            </button>
-            <button 
-              onClick={() => { setActivePage('gallery'); onClose(); setSelectedProduct(null); }}
-              className="block w-full text-left text-lg font-medium py-2 border-b border-gray-50"
-            >
-              Gallery
-            </button>
-            <button 
-              onClick={() => { setActivePage('contact'); onClose(); setSelectedProduct(null); }}
-              className="block w-full text-left text-lg font-medium py-2 border-b border-gray-50"
-            >
-              Contact
-            </button>
-          </nav>
-        </div>
-      </motion.div>
-    </>
+        )}
+      </AnimatePresence>
+
+      <Footer 
+        setActivePage={setActivePage}
+        setActiveCategory={setActiveCategory}
+      />
+    </div>
   );
-};
+}

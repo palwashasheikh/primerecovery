@@ -12,8 +12,13 @@ import Blog from './pages/Blog';
 import Gallery from './pages/Gallery';
 import Contact from './pages/Contact';
 
+import { auth, db, googleProvider, OperationType, handleFirestoreError } from './lib/firebase';
+import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { collection, onSnapshot, addDoc, serverTimestamp, doc, setDoc } from 'firebase/firestore';
+
 export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [user, setUser] = useState<User | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -26,29 +31,75 @@ export default function App() {
   const [customerInfo, setCustomerInfo] = useState({ name: '', email: '' });
 
   useEffect(() => {
-    const fetchProducts = async () => {
-      try {
-        const res = await fetch('/api/products');
-        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-        const data = await res.json();
-        setProducts(data);
-      } catch (err) {
-        console.error('Failed to fetch products:', err);
-        setTimeout(async () => {
-          try {
-            const res = await fetch('/api/products');
-            if (res.ok) {
-              const data = await res.json();
-              setProducts(data);
-            }
-          } catch (retryErr) {
-            console.error('Retry failed:', retryErr);
-          }
-        }, 2000);
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        setCustomerInfo({
+          name: currentUser.displayName || '',
+          email: currentUser.email || ''
+        });
+        
+        // Sync user to Firestore
+        const userRef = doc(db, 'users', currentUser.uid);
+        setDoc(userRef, {
+          displayName: currentUser.displayName,
+          email: currentUser.email,
+          photoURL: currentUser.photoURL,
+          createdAt: serverTimestamp()
+        }, { merge: true }).catch(err => console.error("Error syncing user:", err));
+
+        // Auto-provision admin if it matches the designated email
+        if (currentUser.email === 'hamadshalman23@gmail.com' && currentUser.emailVerified) {
+          const adminRef = doc(db, 'admins', currentUser.uid);
+          setDoc(adminRef, {
+            email: currentUser.email,
+            assignedAt: serverTimestamp()
+          }, { merge: true }).catch(err => console.log("Admin doc already exists or check ignored"));
+        }
       }
-    };
-    fetchProducts();
+    });
+
+    return () => unsubscribeAuth();
   }, []);
+
+  useEffect(() => {
+    const productsPath = 'products';
+    const unsubscribeProducts = onSnapshot(collection(db, productsPath), (snapshot) => {
+      const prods = snapshot.docs.map(doc => ({
+        ...doc.data()
+      })) as Product[];
+      
+      if (prods.length > 0) {
+        setProducts(prods);
+      } else {
+        // Fallback to API if Firestore is empty (initial seeding)
+        fetch('/api/products')
+          .then(res => res.json())
+          .then(data => setProducts(data))
+          .catch(err => console.error("API fallback failed:", err));
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, productsPath);
+    });
+
+    return () => unsubscribeProducts();
+  }, []);
+
+  const login = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      console.error('Login failed:', err);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.error('Logout failed:', err);
+    }
+  };
 
   const addToCart = (product: Product & { selectedVariant?: ProductVariant; quantity?: number }) => {
     const qtyToAdd = product.quantity || 1;
@@ -93,24 +144,51 @@ export default function App() {
 
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ordersPath = 'orders';
     try {
-      const res = await fetch('/api/orders', {
+      // 1. Create the Order document
+      const orderData = {
+        userId: user?.uid || null,
+        customerName: customerInfo.name,
+        customerEmail: customerInfo.email,
+        totalAmount,
+        status: 'pending',
+        createdAt: serverTimestamp()
+      };
+      
+      const orderRef = await addDoc(collection(db, ordersPath), orderData);
+      
+      // 2. Add items to subcollection
+      const itemsPath = `orders/${orderRef.id}/items`;
+      for (const item of cart) {
+        await addDoc(collection(db, itemsPath), {
+          productId: item.id,
+          name: item.name,
+          variantTitle: item.selectedVariant?.title || null,
+          quantity: item.quantity,
+          price: item.price
+        });
+      }
+
+      // 3. Fallback to server API if needed (optional, but keep for now if server does something else like email notifications)
+      await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customerName: customerInfo.name,
           customerEmail: customerInfo.email,
           items: cart,
-          totalAmount
+          totalAmount,
+          firebaseOrderId: orderRef.id
         })
       });
-      if (res.ok) {
-        setOrderSuccess(true);
-        setCart([]);
-        setIsCheckoutOpen(false);
-      }
+
+      setOrderSuccess(true);
+      setCart([]);
+      setIsCheckoutOpen(false);
     } catch (err) {
       console.error('Checkout failed:', err);
+      handleFirestoreError(err, OperationType.WRITE, ordersPath);
     }
   };
 
@@ -126,6 +204,9 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-[#1A1A1A] font-sans">
       <Navbar 
+        user={user}
+        onLogin={login}
+        onLogout={logout}
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         cartCount={cart.reduce((a, b) => a + b.quantity, 0)}
@@ -142,26 +223,20 @@ export default function App() {
         }}
       />
 
-      {/* Mobile Menu logic is handled inside Navbar or as a separate component, 
-          but for now I'll keep the AnimatePresence for Menu here or move it to Navbar.
-          Actually, I'll move the Mobile Menu logic to a separate component or keep it in App for now if it's complex.
-          Wait, I didn't create a MobileMenu component yet. I'll keep it in App for a moment then move it.
-      */}
-      
-      {/* Mobile Menu (Moved logic to Navbar would be better, but let's keep it consistent with previous edits) */}
       <AnimatePresence>
         {isMenuOpen && (
-          <>
-            <Navbar.MobileMenu 
-              isOpen={isMenuOpen}
-              onClose={() => setIsMenuOpen(false)}
-              searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
-              setActivePage={setActivePage}
-              setActiveCategory={setActiveCategory}
-              setSelectedProduct={setSelectedProduct}
-            />
-          </>
+          <Navbar.MobileMenu 
+            isOpen={isMenuOpen}
+            onClose={() => setIsMenuOpen(false)}
+            user={user}
+            onLogin={login}
+            onLogout={logout}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            setActivePage={setActivePage}
+            setActiveCategory={setActiveCategory}
+            setSelectedProduct={setSelectedProduct}
+          />
         )}
       </AnimatePresence>
 
@@ -204,10 +279,11 @@ export default function App() {
       <CheckoutModal 
         isOpen={isCheckoutOpen}
         onClose={() => setIsCheckoutOpen(false)}
+        user={user}
         customerInfo={customerInfo}
         setCustomerInfo={setCustomerInfo}
         handleCheckout={handleCheckout}
-        cartCount={cart.length}
+        cartCount={cart.reduce((a, b) => a + b.quantity, 0)}
         totalAmount={totalAmount}
       />
 

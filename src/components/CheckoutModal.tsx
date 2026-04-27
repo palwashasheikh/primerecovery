@@ -1,10 +1,11 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { CartItem } from '../types';
+import { User } from 'firebase/auth';
 
 interface CheckoutModalProps {
   isOpen: boolean;
   onClose: () => void;
+  user: User | null;
   customerInfo: { name: string; email: string };
   setCustomerInfo: React.Dispatch<React.SetStateAction<{ name: string; email: string }>>;
   handleCheckout: (e: React.FormEvent) => void;
@@ -15,6 +16,7 @@ interface CheckoutModalProps {
 export default function CheckoutModal({
   isOpen,
   onClose,
+  user,
   customerInfo,
   setCustomerInfo,
   handleCheckout,
@@ -40,27 +42,54 @@ export default function CheckoutModal({
           >
             <div className="p-8">
               <h2 className="text-2xl font-bold mb-6">Complete Order</h2>
+              
+              {user && (
+                <div className="mb-6 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3">
+                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                  <p className="text-sm text-emerald-800">
+                    Logged in as <span className="font-bold">{user.displayName}</span>
+                  </p>
+                </div>
+              )}
+
               <form onSubmit={handleCheckout} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                  <input 
-                    required
-                    type="text" 
-                    className="w-full bg-gray-100 border-none rounded-xl py-3 px-4 focus:ring-2 focus:ring-black/5"
-                    value={customerInfo.name}
-                    onChange={e => setCustomerInfo(prev => ({ ...prev, name: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
-                  <input 
-                    required
-                    type="email" 
-                    className="w-full bg-gray-100 border-none rounded-xl py-3 px-4 focus:ring-2 focus:ring-black/5"
-                    value={customerInfo.email}
-                    onChange={e => setCustomerInfo(prev => ({ ...prev, email: e.target.value }))}
-                  />
-                </div>
+                {!user ? (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                      <input 
+                        required
+                        type="text" 
+                        className="w-full bg-gray-100 border-none rounded-xl py-3 px-4 focus:ring-2 focus:ring-black/5"
+                        value={customerInfo.name}
+                        onChange={e => setCustomerInfo(prev => ({ ...prev, name: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                      <input 
+                        required
+                        type="email" 
+                        className="w-full bg-gray-100 border-none rounded-xl py-3 px-4 focus:ring-2 focus:ring-black/5"
+                        value={customerInfo.email}
+                        onChange={e => setCustomerInfo(prev => ({ ...prev, email: e.target.value }))}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-4">
+                     <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Name</label>
+                      <input 
+                        required
+                        type="text" 
+                        className="w-full bg-gray-100 border-none rounded-xl py-3 px-4 focus:ring-2 focus:ring-black/5"
+                        value={customerInfo.name}
+                        onChange={e => setCustomerInfo(prev => ({ ...prev, name: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                )}
                 <div className="pt-4">
                   <div className="bg-gray-50 p-4 rounded-2xl mb-6">
                     <div className="flex justify-between text-sm text-gray-500 mb-2">

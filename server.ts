@@ -26,6 +26,7 @@ db.exec(`
     customer_email TEXT NOT NULL,
     total_amount REAL NOT NULL,
     status TEXT DEFAULT 'pending',
+    firebase_order_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -153,13 +154,13 @@ async function startServer() {
   });
 
   app.post("/api/orders", (req, res) => {
-    const { customerName, customerEmail, items, totalAmount } = req.body;
+    const { customerName, customerEmail, items, totalAmount, firebaseOrderId } = req.body;
     
     try {
       db.exec("BEGIN TRANSACTION");
       
-      const orderResult = db.prepare("INSERT INTO orders (customer_name, customer_email, total_amount) VALUES (?, ?, ?)")
-        .run(customerName, customerEmail, totalAmount);
+      const orderResult = db.prepare("INSERT INTO orders (customer_name, customer_email, total_amount, firebase_order_id) VALUES (?, ?, ?, ?)")
+        .run(customerName, customerEmail, totalAmount, firebaseOrderId || null);
       
       const orderId = orderResult.lastInsertRowid;
       const insertItem = db.prepare("INSERT INTO order_items (order_id, product_id, variant_title, quantity, price) VALUES (?, ?, ?, ?, ?)");
