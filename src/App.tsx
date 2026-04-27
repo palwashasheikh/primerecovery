@@ -14,7 +14,7 @@ import Contact from './pages/Contact';
 
 import { auth, db, googleProvider, OperationType, handleFirestoreError } from './lib/firebase';
 import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
-import { collection, onSnapshot, addDoc, serverTimestamp, doc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, serverTimestamp, doc, setDoc, writeBatch } from 'firebase/firestore';
 
 export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -146,9 +146,11 @@ export default function App() {
     e.preventDefault();
     const ordersPath = 'orders';
     try {
-      // 1. Create the Order document
-      const orderData = {
-        userId: user?.uid || null,
+      const batch = writeBatch(db);
+      
+      // 1. Create the Order document reference
+      const orderRef = doc(collection(db, ordersPath));
+      const orderData: any = {
         customerName: customerInfo.name,
         customerEmail: customerInfo.email,
         totalAmount,
@@ -156,12 +158,16 @@ export default function App() {
         createdAt: serverTimestamp()
       };
       
-      const orderRef = await addDoc(collection(db, ordersPath), orderData);
+      if (user) {
+        orderData.userId = user.uid;
+      }
+      
+      batch.set(orderRef, orderData);
       
       // 2. Add items to subcollection
-      const itemsPath = `orders/${orderRef.id}/items`;
       for (const item of cart) {
-        await addDoc(collection(db, itemsPath), {
+        const itemRef = doc(collection(db, `orders/${orderRef.id}/items`));
+        batch.set(itemRef, {
           productId: item.id,
           name: item.name,
           variantTitle: item.selectedVariant?.title || null,
@@ -170,7 +176,9 @@ export default function App() {
         });
       }
 
-      // 3. Fallback to server API if needed (optional, but keep for now if server does something else like email notifications)
+      await batch.commit();
+      
+      // 3. Fallback to server API
       await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

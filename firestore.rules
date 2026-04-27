@@ -28,9 +28,9 @@ service cloud.firestore {
         && data.price is number && data.price >= 0
         && data.image is string && data.image.size() <= 1000
         && data.category is string && data.category.size() <= 100
-        && (!data.hasAny(['description']) || data.description is string && data.description.size() <= 10000)
-        && (!data.hasAny(['variants']) || data.variants is string && data.variants.size() <= 20000)
-        && (!data.hasAny(['options']) || data.options is string && data.options.size() <= 5000)
+        && (!data.hasAny(['description']) || data.description == null || (data.description is string && data.description.size() <= 10000))
+        && (!data.hasAny(['variants']) || data.variants == null || (data.variants is string && data.variants.size() <= 20000))
+        && (!data.hasAny(['options']) || data.options == null || (data.options is string && data.options.size() <= 5000))
         && (!data.hasAny(['updatedAt']) || data.updatedAt == request.time);
     }
 
@@ -41,7 +41,7 @@ service cloud.firestore {
         && data.totalAmount is number && data.totalAmount >= 0
         && data.status in ['pending', 'processing', 'completed', 'cancelled']
         && data.createdAt == request.time
-        && (!data.hasAny(['userId']) || (data.userId is string && data.userId == request.auth.uid));
+        && (!data.hasAny(['userId']) || data.userId == null || (data.userId is string && data.userId == request.auth.uid));
     }
 
     function isValidOrderItem(data) {
@@ -50,7 +50,7 @@ service cloud.firestore {
         && data.name is string && data.name.size() > 0 && data.name.size() <= 200
         && data.quantity is int && data.quantity > 0 && data.quantity <= 100
         && data.price is number && data.price >= 0
-        && (!data.hasAny(['variantTitle']) || (data.variantTitle is string && data.variantTitle.size() <= 200));
+        && (!data.hasAny(['variantTitle']) || data.variantTitle == null || (data.variantTitle is string && data.variantTitle.size() <= 200));
     }
 
     function isValidUser(data) {
