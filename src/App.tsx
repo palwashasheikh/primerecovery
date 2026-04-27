@@ -12,9 +12,24 @@ import Blog from './pages/Blog';
 import Gallery from './pages/Gallery';
 import Contact from './pages/Contact';
 
-import { auth, db, googleProvider, OperationType, handleFirestoreError } from './lib/firebase';
-import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
-import { collection, onSnapshot, addDoc, serverTimestamp, doc, setDoc, writeBatch } from 'firebase/firestore';
+import { 
+  auth, 
+  db, 
+  googleProvider, 
+  OperationType, 
+  handleFirestoreError,
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  User,
+  collection, 
+  onSnapshot, 
+  addDoc, 
+  serverTimestamp, 
+  doc, 
+  setDoc, 
+  writeBatch 
+} from './lib/firebase';
 
 export default function App() {
   const [products, setProducts] = useState<Product[]>([]);

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { CheckCircle2, X } from 'lucide-react';
 import { Product, CartItem, ProductVariant } from './types';
-import {ProductDetails} from "'./components/ProductDetails"
+import { ProductDetails} from './components/ProductDetails';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import CartSidebar from './components/CartSidebar';
